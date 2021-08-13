@@ -152,7 +152,7 @@ class YOLOv3(nn.Module):
             if i in [14, 22, 28]:
                 if train:
                     x, *loss_dict = module(x, targets)
-                    for name, loss in zip(['xy', 'wh', 'conf', 'cls', 'l2'] , loss_dict):
+                    for name, loss in zip(['xy', 'wh', 'conf', 'cls', 'l2'], loss_dict):
                         self.loss_dict[name] += loss
                 else:
                     x = module(x)

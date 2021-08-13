@@ -1,3 +1,5 @@
+# -*-coding:utf-8-*-
+
 import torch
 import torch.nn as nn
 import numpy as np
@@ -63,39 +65,57 @@ class YOLOLayer(nn.Module):
             loss_obj (torch.Tensor): objectness loss - calculated by BCE.
             loss_cls (torch.Tensor): classification loss - calculated by BCE for each class.
             loss_l2 (torch.Tensor): total l2 loss - only for logging.
+        坐标：
+        b_x = sigmoid(t_x) + c_x; b_y = sigmoid(t_y) + c_y
+        b_w = a_w*e^{t_w}; b_h = a_h*e^{t_h}
+        c_x, c_y是对应格子的左上角点相对于图的坐标，图左上角为原点；
+        t_x, t_y 是预测的中心点偏移量；
+        t_w, t_h 是预测的anchor宽和高的放缩值
+        a_w, a_h是原本anchor的宽和高
         """
         output = self.conv(xin)
-
+        # after backbone output.shape [b,(5+80)*3,size,size]
         batchsize = output.shape[0]
         fsize = output.shape[2]
         n_ch = 5 + self.n_classes
         dtype = torch.cuda.FloatTensor if xin.is_cuda else torch.FloatTensor
 
+        # self.n_anchors = 3, n_ch = 5 + 80 represent[x,y,w,h,score,cls1,cls2....,cls80]
         output = output.view(batchsize, self.n_anchors, n_ch, fsize, fsize)
+        # -->(batchsize, self.n_anchors, fsize, fsize, n_ch)
         output = output.permute(0, 1, 3, 4, 2)  # .contiguous()
 
         # logistic activation for xy, obj, cls
+        # np.r_[:2, 4:n_ch]-->np.array[0,1,4,5,...,79]
+        # use sigmoid for t_x,t_y and n_classes
         output[..., np.r_[:2, 4:n_ch]] = torch.sigmoid(
             output[..., np.r_[:2, 4:n_ch]])
 
         # calculate pred - xywh obj cls
 
+        # generate c_x and c_y
         x_shift = dtype(np.broadcast_to(
             np.arange(fsize, dtype=np.float32), output.shape[:4]))
         y_shift = dtype(np.broadcast_to(
             np.arange(fsize, dtype=np.float32).reshape(fsize, 1), output.shape[:4]))
 
+        # the 3 anchors use in this layer [[w_1, h_1], [w_2, h_2], [w_3, h_3]]
         masked_anchors = np.array(self.masked_anchors)
 
+        # generate a_w and a_h
         w_anchors = dtype(np.broadcast_to(np.reshape(
             masked_anchors[:, 0], (1, self.n_anchors, 1, 1)), output.shape[:4]))
         h_anchors = dtype(np.broadcast_to(np.reshape(
             masked_anchors[:, 1], (1, self.n_anchors, 1, 1)), output.shape[:4]))
 
         pred = output.clone()
+        # b_x = sigmoid(t_x) + c_x
         pred[..., 0] += x_shift
+        # b_y = sigmoid(t_y) + c_y
         pred[..., 1] += y_shift
+        # b_w = a_w*e^{t_w}
         pred[..., 2] = torch.exp(pred[..., 2]) * w_anchors
+        # b_h = a_h*e^{t_h}
         pred[..., 3] = torch.exp(pred[..., 3]) * h_anchors
 
         if labels is None:  # not training
@@ -117,17 +137,22 @@ class YOLOLayer(nn.Module):
                              fsize, fsize, n_ch).type(dtype)
 
         labels = labels.cpu().data
+        # check data and calculate the number of objects in one image; nlabel.shape:[b,1]
         nlabel = (labels.sum(dim=2) > 0).sum(dim=1)  # number of objects
 
         truth_x_all = labels[:, :, 1] * fsize
         truth_y_all = labels[:, :, 2] * fsize
         truth_w_all = labels[:, :, 3] * fsize
         truth_h_all = labels[:, :, 4] * fsize
+        # TODO: is all Integer?
+        # !yes
         truth_i_all = truth_x_all.to(torch.int16).numpy()
         truth_j_all = truth_y_all.to(torch.int16).numpy()
 
         for b in range(batchsize):
+            # 取出该张图片内物体（目标）的数量
             n = int(nlabel[b])
+            # if equal 0 ,meaning no object
             if n == 0:
                 continue
             truth_box = dtype(np.zeros((n, 4)))
@@ -136,10 +161,12 @@ class YOLOLayer(nn.Module):
             truth_i = truth_i_all[b, :n]
             truth_j = truth_j_all[b, :n]
 
-            # calculate iou between truth and reference anchors
+            # calculate iou between truth and reference anchors shape;[num_of_truthbox, all_anchor(9)]
             anchor_ious_all = bboxes_iou(truth_box.cpu(), self.ref_anchors)
+            # get index of max iou in all_anchor，按行获得最大iou的索引，即在9个anchor框中找到与该truth_box的iou最大的一个
             best_n_all = np.argmax(anchor_ious_all, axis=1)
             best_n = best_n_all % 3
+            # 或运算，找是否存在当前层的三个anchor是最大的iou的候选anchor
             best_n_mask = ((best_n_all == self.anch_mask[0]) | (
                 best_n_all == self.anch_mask[1]) | (best_n_all == self.anch_mask[2]))
 
@@ -147,22 +174,22 @@ class YOLOLayer(nn.Module):
             truth_box[:n, 1] = truth_y_all[b, :n]
 
             pred_ious = bboxes_iou(
-                pred[b].view(-1, 4), truth_box, xyxy=False)
-            pred_best_iou, _ = pred_ious.max(dim=1)
+                pred[b].contiguous().view(-1, 4), truth_box, xyxy=False) # 计算所有预测框与9个anchor框的iou
+            pred_best_iou, _ = pred_ious.max(dim=1) # 取每一行里最大的anchor，即从9个anchor中找到具有最大iou的anchor
             pred_best_iou = (pred_best_iou > self.ignore_thre)
             pred_best_iou = pred_best_iou.view(pred[b].shape[:3])
             # set mask to zero (ignore) if pred matches truth
-            obj_mask[b] = 1 - pred_best_iou
-
+            # obj_mask[b] = 1 - pred_best_iou
+            obj_mask[b] = ~pred_best_iou
             if sum(best_n_mask) == 0:
                 continue
-
+            # 这里范围是预测的框个数
             for ti in range(best_n.shape[0]):
                 if best_n_mask[ti] == 1:
-                    i, j = truth_i[ti], truth_j[ti]
-                    a = best_n[ti]
-                    obj_mask[b, a, j, i] = 1
-                    tgt_mask[b, a, j, i, :] = 1
+                    i, j = truth_i[ti], truth_j[ti] # 取真实label的中心点
+                    a = best_n[ti] # 取匹配上的anchor的index
+                    obj_mask[b, a, j, i] = 1 # TODO:?
+                    tgt_mask[b, a, j, i, :] = 1 # TODO: ?
                     target[b, a, j, i, 0] = truth_x_all[b, ti] - \
                         truth_x_all[b, ti].to(torch.int16).to(torch.float)
                     target[b, a, j, i, 1] = truth_y_all[b, ti] - \

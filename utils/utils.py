@@ -158,7 +158,7 @@ def bboxes_iou(bboxes_a, bboxes_b, xyxy=True):
         # bottom right
         br = torch.min((bboxes_a[:, None, :2] + bboxes_a[:, None, 2:] / 2),
                         (bboxes_b[:, :2] + bboxes_b[:, 2:] / 2))
-
+        # torch.prod: 返回输入张量给定维度上的积
         area_a = torch.prod(bboxes_a[:, 2:], 1)
         area_b = torch.prod(bboxes_b[:, 2:], 1)
     en = (tl < br).type(tl.type()).prod(dim=2)

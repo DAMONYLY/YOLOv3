@@ -1,9 +1,10 @@
+cd /media/liangyong_yao/D46E16B36E168E7C
 mkdir COCO
 cd COCO
 
-wget http://images.cocodataset.org/zips/train2017.zip
-wget http://images.cocodataset.org/zips/val2017.zip
-wget http://images.cocodataset.org/annotations/annotations_trainval2017.zip
+#wget http://images.cocodataset.org/zips/train2017.zip
+#wget http://images.cocodataset.org/zips/val2017.zip
+#wget http://images.cocodataset.org/annotations/annotations_trainval2017.zip
 
 unzip train2017.zip
 unzip val2017.zip
