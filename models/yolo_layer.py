@@ -120,7 +120,7 @@ class YOLOLayer(nn.Module):
 
         if labels is None:  # not training
             pred[..., :4] *= self.stride
-            return pred.view(batchsize, -1, n_ch).data
+            return pred.contiguous().view(batchsize, -1, n_ch).data
 
         pred = pred[..., :4].data
 

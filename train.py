@@ -1,5 +1,7 @@
 from __future__ import division
 
+import time
+
 from utils.utils import *
 from utils.cocoapi_evaluator import COCOAPIEvaluator
 from utils.parse_yolo_weights import parse_yolo_weights
@@ -10,6 +12,7 @@ import os
 import argparse
 import yaml
 import random
+import sys
 
 import torch
 from torch.autograd import Variable
@@ -45,6 +48,7 @@ def main():
     """
     YOLOv3 trainer. See README for details.
     """
+    sys.argv = ['train.py', '--n_cpu', '4']
     args = parse_args()
     print("Setting Arguments.. : ", args)
 
@@ -81,6 +85,7 @@ def main():
             factor = 0.1
         else:
             factor = 0.01
+        # print(i, factor)
         return factor
 
     # Initiate model
@@ -110,7 +115,8 @@ def main():
 
     imgsize = cfg['TRAIN']['IMGSIZE']
     dataset = COCODataset(model_type=cfg['MODEL']['TYPE'],
-                  data_dir='/media/liangyong_yao/D46E16B36E168E7C/COCO/',
+                  # data_dir='/DeepLearning/shuang_yan/data/coco_2017_train',
+                  data_dir='/media/liangyong_yao/D46E16B36E168E7C/COCO',
                   img_size=imgsize,
                   augmentation=cfg['AUGMENTATION'],
                   debug=args.debug)
@@ -120,7 +126,8 @@ def main():
     dataiterator = iter(dataloader)
 
     evaluator = COCOAPIEvaluator(model_type=cfg['MODEL']['TYPE'],
-                    data_dir='/media/liangyong_yao/D46E16B36E168E7C/COCO/',
+                    # data_dir='/DeepLearning/shuang_yan/data/coco_2017_val',
+                    data_dir='/media/liangyong_yao/D46E16B36E168E7C/COCO',
                     img_size=cfg['TEST']['IMGSIZE'],
                     confthre=cfg['TEST']['CONFTHRE'],
                     nmsthre=cfg['TEST']['NMSTHRE'])
@@ -149,8 +156,9 @@ def main():
     scheduler = optim.lr_scheduler.LambdaLR(optimizer, burnin_schedule)
 
     # start training loop
+    all_time = 0
     for iter_i in range(iter_state, iter_size + 1):
-
+        start_time = time.time()
         # COCO evaluation
         if iter_i % args.eval_interval == 0 and iter_i > 0:
             ap50_95, ap50 = evaluator.evaluate(model)
@@ -171,21 +179,25 @@ def main():
             targets = Variable(targets.type(dtype), requires_grad=False)
             loss = model(imgs, targets)
             loss.backward()
-
+        # print(iter_i)
         optimizer.step()
         scheduler.step()
-
-        if iter_i % 10 == 0:
+        end_time = time.time()
+        all_time += end_time-start_time
+        if iter_i % 100 == 0:
             # logging
             current_lr = scheduler.get_lr()[0] * batch_size * subdivision
-            print('[Iter %d/%d] [lr %f] '
-                  '[Losses: xy %f, wh %f, conf %f, cls %f, total %f, imgsize %d]'
-                  % (iter_i, iter_size, current_lr,
-                     model.loss_dict['xy'], model.loss_dict['wh'],
-                     model.loss_dict['conf'], model.loss_dict['cls'], 
-                     model.loss_dict['l2'], imgsize),
-                  flush=True)
-
+            line = 'Time: {:.4f} Iter: {}/{}, lr: {:.6f}, Losses: xy {:.6f}, wh {:.6f}, conf {:.6f}, cls {:.6f}, ' \
+                   'total {:.6f}, imgsize {}'.format(
+                all_time, iter_i, iter_size, current_lr, model.loss_dict['xy'], model.loss_dict['wh'], model.loss_dict['conf'],
+                model.loss_dict['cls'], model.loss_dict['l2'], imgsize
+            )
+            # print('[Iter %d/%d] [lr %f] ' '[Losses: xy %f, wh %f, conf %f, cls %f, total %f, imgsize %d]'
+            #       % (iter_i, iter_size, current_lr,model.loss_dict['xy'], model.loss_dict['wh'],model.loss_dict['conf'], model.loss_dict['cls'], model.loss_dict['l2'], imgsize), flush=True)
+            print('='*len(line))
+            print(line)
+            print('='*len(line))
+            all_time = 0
             if args.tfboard:
                 tblogger.add_scalar('train/total_loss', model.loss_dict['l2'], iter_i)
 

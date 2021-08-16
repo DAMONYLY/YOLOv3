@@ -26,10 +26,14 @@ def main():
                         default=False, help='background(no-display mode. save "./output.png")')
     parser.add_argument('--detect_thresh', type=float,
                         default=None, help='confidence threshold')
+    import sys
+    # python demo.py --image data/30.jpg --detect_thresh 0.5 --weights_path weights/yolov3.weights --gpu -1
+    sys.argv = ['demo.py', '--image', 'data/innsbruck.png', '--detect_thresh',
+                '0.5', '--weights_path', 'weights/yolov3.weights', '--gpu', '-1']
     args = parser.parse_args()
-
+    print(args)
     with open(args.cfg, 'r') as f:
-        cfg = yaml.load(f)
+        cfg = yaml.load(f, Loader=yaml.FullLoader)
 
     imgsize = cfg['TEST']['IMGSIZE']
     model = YOLOv3(cfg['MODEL'])
@@ -40,7 +44,7 @@ def main():
     if args.detect_thresh:
         confthre = args.detect_thresh
 
-    img = cv2.imread(args.image)
+    img = cv2.imread(args.image) # [h,w,c](bgr)
     img_raw = img.copy()[:, :, ::-1].transpose((2, 0, 1))
     img, info_img = preprocess(img, imgsize, jitter=0)  # info = (h, w, nh, nw, dx, dy)
     img = np.transpose(img / 255., (2, 0, 1))

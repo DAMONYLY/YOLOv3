@@ -29,20 +29,27 @@ def nms(bbox, thresh, score=None, limit=None):
         return np.zeros((0,), dtype=np.int32)
 
     if score is not None:
+        # 按score从大到小排序，是索引
         order = score.argsort()[::-1]
+        # 对box重新排序
         bbox = bbox[order]
+    # 返回指定维度的所有元素乘积，即获得所有所有检测框各自的面积
     bbox_area = np.prod(bbox[:, 2:] - bbox[:, :2], axis=1)
-
+    # 制作输出的框数组，用True，False表示
     selec = np.zeros(bbox.shape[0], dtype=bool)
+    # 遍历检测框
     for i, b in enumerate(bbox):
+        # 取当前检测框左上角点与输出框数组中所有检测框的较大值
         tl = np.maximum(b[:2], bbox[selec, :2])
+        # 取当前检测框右上角点与输出框数组中所有检测框的较小值
         br = np.minimum(b[2:], bbox[selec, 2:])
+        # 求交集的面积
         area = np.prod(br - tl, axis=1) * (tl < br).all(axis=1)
-
+        # 求交并比
         iou = area / (bbox_area[i] + bbox_area[selec] - area)
+        # 如果该检测框与任何一个输出框数组的检测框交并比大于阈值，则舍弃，否则加入输出框数组
         if (iou >= thresh).any():
             continue
-
         selec[i] = True
         if limit is not None and np.count_nonzero(selec) >= limit:
             break
@@ -76,25 +83,33 @@ def postprocess(prediction, num_classes, conf_thre=0.7, nms_thre=0.45):
         output (list of torch tensor):
 
     """
+    # 求检测框的左上角坐标和右下角坐标(x1,y1,x2,y2)
     box_corner = prediction.new(prediction.shape)
     box_corner[:, :, 0] = prediction[:, :, 0] - prediction[:, :, 2] / 2
     box_corner[:, :, 1] = prediction[:, :, 1] - prediction[:, :, 3] / 2
     box_corner[:, :, 2] = prediction[:, :, 0] + prediction[:, :, 2] / 2
     box_corner[:, :, 3] = prediction[:, :, 1] + prediction[:, :, 3] / 2
     prediction[:, :, :4] = box_corner[:, :, :4]
-
+    # 有几张图片就输出几张
     output = [None for _ in range(len(prediction))]
+    # 分 张数进行处理
     for i, image_pred in enumerate(prediction):
         # Filter out confidence scores below threshold
+        # 求最大分类类别的值
         class_pred = torch.max(image_pred[:, 5:5 + num_classes], 1)
         class_pred = class_pred[0]
+        # 求该类别的置信度，转成True，False形式
         conf_mask = (image_pred[:, 4] * class_pred >= conf_thre).squeeze()
+        # 取出大于置信度阈值的检测框
         image_pred = image_pred[conf_mask]
 
         # If none are remaining => process next image
         if not image_pred.size(0):
             continue
         # Get detections with higher confidence scores than the threshold
+        # nonzero：返回原tensor中非零的位置索引，输入：[x,y], 输出：[N,2]
+        # N代表输入中不为0的个数，N可以不等于x, 2则分别是输入的第0，1维坐标值
+        # 求每个检测框所有类别的类别置信度，且输出大于阈值的检测框和类别，保存索引
         ind = (image_pred[:, 5:] * image_pred[:, 4][:, None] >= conf_thre).nonzero()
         # Detections ordered as (x1, y1, x2, y2, obj_conf, class_conf, class_pred)
         detections = torch.cat((
@@ -103,12 +118,16 @@ def postprocess(prediction, num_classes, conf_thre=0.7, nms_thre=0.45):
                 ind[:, 1].float().unsqueeze(1)
                 ), 1)
         # Iterate through all predicted classes
+        # 将检测框中的不重复类别挑出来，并且默认为升序排列
         unique_labels = detections[:, -1].cpu().unique()
         if prediction.is_cuda:
             unique_labels = unique_labels.cuda()
+        # 分类别讨论
         for c in unique_labels:
             # Get the detections with the particular class
+            # 取出同一类别的检测框
             detections_class = detections[detections[:, -1] == c]
+            # 送入NMS
             nms_in = detections_class.cpu().numpy()
             nms_out_index = nms(
                 nms_in[:, :4], nms_thre, score=nms_in[:, 4]*nms_in[:, 5])
@@ -248,7 +267,7 @@ def preprocess(img, imgsize, jitter, random_placing=False):
             dx, dy (int): pad size
     """
     h, w, _ = img.shape
-    img = img[:, :, ::-1]
+    img = img[:, :, ::-1] # bgr to rgb
     assert img is not None
 
     if jitter > 0:
