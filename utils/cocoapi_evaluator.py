@@ -88,7 +88,7 @@ class COCOAPIEvaluator():
                 A = {"image_id": id_, "category_id": label, "bbox": bbox,
                      "score": score, "segmentation": []} # COCO json format
                 data_dict.append(A)
-
+            print('ID',id_, 'down')
         annType = ['segm', 'bbox', 'keypoints']
 
         # Evaluate the Dt (detection) json comparing with the ground truth

@@ -76,7 +76,9 @@ class YOLOLayer(nn.Module):
         output = self.conv(xin)
         # after backbone output.shape [b,(5+80)*3,size,size]
         batchsize = output.shape[0]
+        # 当前特征图尺寸
         fsize = output.shape[2]
+        # 85
         n_ch = 5 + self.n_classes
         dtype = torch.cuda.FloatTensor if xin.is_cuda else torch.FloatTensor
 
@@ -103,10 +105,12 @@ class YOLOLayer(nn.Module):
         masked_anchors = np.array(self.masked_anchors)
 
         # generate a_w and a_h
+        # masked_anchors.shape[3,2], output.shape[b,3,fsize,fsize,85]
         w_anchors = dtype(np.broadcast_to(np.reshape(
             masked_anchors[:, 0], (1, self.n_anchors, 1, 1)), output.shape[:4]))
         h_anchors = dtype(np.broadcast_to(np.reshape(
             masked_anchors[:, 1], (1, self.n_anchors, 1, 1)), output.shape[:4]))
+        # w_anchors.shape[b,3,fsize,fize]
 
         pred = output.clone()
         # b_x = sigmoid(t_x) + c_x
@@ -135,17 +139,19 @@ class YOLOLayer(nn.Module):
 
         target = torch.zeros(batchsize, self.n_anchors,
                              fsize, fsize, n_ch).type(dtype)
-
+        # labels.shape[b,50,5] 5:[cls,x,y,w,h]
         labels = labels.cpu().data
         # check data and calculate the number of objects in one image; nlabel.shape:[b,1]
         nlabel = (labels.sum(dim=2) > 0).sum(dim=1)  # number of objects
 
+        # shape[b,50]
         truth_x_all = labels[:, :, 1] * fsize
         truth_y_all = labels[:, :, 2] * fsize
         truth_w_all = labels[:, :, 3] * fsize
         truth_h_all = labels[:, :, 4] * fsize
         # TODO: is all Integer?
         # !yes
+        # 真实框左上角左边
         truth_i_all = truth_x_all.to(torch.int16).numpy()
         truth_j_all = truth_y_all.to(torch.int16).numpy()
 
@@ -156,37 +162,48 @@ class YOLOLayer(nn.Module):
             if n == 0:
                 continue
             truth_box = dtype(np.zeros((n, 4)))
+            # 把GT框的w, h 存入truth_box
             truth_box[:n, 2] = truth_w_all[b, :n]
             truth_box[:n, 3] = truth_h_all[b, :n]
+            # 真实框左上角坐标
             truth_i = truth_i_all[b, :n]
             truth_j = truth_j_all[b, :n]
 
             # calculate iou between truth and reference anchors shape;[num_of_truthbox, all_anchor(9)]
+            # self.ref_anchors 指所有9个anchor，经过下采样变换之后
             anchor_ious_all = bboxes_iou(truth_box.cpu(), self.ref_anchors)
             # get index of max iou in all_anchor，按行获得最大iou的索引，即在9个anchor框中找到与该truth_box的iou最大的一个
             best_n_all = np.argmax(anchor_ious_all, axis=1)
             best_n = best_n_all % 3
             # 或运算，找是否存在当前层的三个anchor是最大的iou的候选anchor
+            # self.anch_mask 是当前层使用的anchor编号
             best_n_mask = ((best_n_all == self.anch_mask[0]) | (
                 best_n_all == self.anch_mask[1]) | (best_n_all == self.anch_mask[2]))
-
+            # best_n_mask.shape[n,1]
+            # 把GT框的左上角坐标存入truth_box
             truth_box[:n, 0] = truth_x_all[b, :n]
             truth_box[:n, 1] = truth_y_all[b, :n]
 
+            # pred.shape[3,fsize,fsize,4] 4: 左上角坐标，w, h
             pred_ious = bboxes_iou(
-                pred[b].contiguous().view(-1, 4), truth_box, xyxy=False) # 计算所有预测框与9个anchor框的iou
-            pred_best_iou, _ = pred_ious.max(dim=1) # 取每一行里最大的anchor，即从9个anchor中找到具有最大iou的anchor
+                pred[b].contiguous().view(-1, 4), truth_box, xyxy=False) # 计算所有预测框与all GT框的iou
+
+            pred_best_iou, _ = pred_ious.max(dim=1) # 取每一行里最大的anchor，即即找到每一个预测框对应最大IOU的GT框
+            # 过滤掉不符合条件的框
             pred_best_iou = (pred_best_iou > self.ignore_thre)
+            # reshape to origin shape [3, fsize, fsize]
             pred_best_iou = pred_best_iou.view(pred[b].shape[:3])
             # set mask to zero (ignore) if pred matches truth
             # obj_mask[b] = 1 - pred_best_iou
             obj_mask[b] = ~pred_best_iou
             if sum(best_n_mask) == 0:
                 continue
-            # 这里范围是预测的框个数
+            # 这里范围是GT框个数 best_n.shape[n,1],n 指真实GT框的数量，都经过3取余
+            # best_n_mask.shape[n,1]，找是否存在当前层的三个anchor是最大的iou的候选anchor
             for ti in range(best_n.shape[0]):
                 if best_n_mask[ti] == 1:
-                    i, j = truth_i[ti], truth_j[ti] # 取真实label的中心点
+                    # truth_i,truth_j真实框左上角坐标
+                    i, j = truth_i[ti], truth_j[ti] # 取真实label的左上角坐标
                     a = best_n[ti] # 取匹配上的anchor的index
                     obj_mask[b, a, j, i] = 1 # TODO:?
                     tgt_mask[b, a, j, i, :] = 1 # TODO: ?

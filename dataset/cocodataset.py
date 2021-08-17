@@ -33,11 +33,8 @@ class COCODataset(Dataset):
         # if name == 'train2017':
             # self.coco = COCO(self.data_dir+'coco_2017_train'+self.json_file)
         # else:
-        computer = True
-        if computer:
-            self.coco = COCO(self.data_dir + '/' + self.json_file)
-        else:
-            self.coco = COCO(self.data_dir + '/' + self.json_file)
+
+        self.coco = COCO(self.data_dir + '/' + self.json_file)
         self.ids = self.coco.getImgIds()
         if debug:
             self.ids = self.ids[1:2]

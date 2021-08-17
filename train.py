@@ -31,6 +31,8 @@ def parse_args():
                         default=1000, help='interval between saving checkpoints')
     parser.add_argument('--eval_interval', type=int,
                             default=4000, help='interval between evaluations')
+    parser.add_argument('--print_interval', type=int,
+                            default=10, help='interval between print loss')
     parser.add_argument('--checkpoint', type=str,
                         help='pytorch checkpoint file path')
     parser.add_argument('--checkpoint_dir', type=str,
@@ -57,7 +59,7 @@ def main():
 
     # Parse config settings
     with open(args.cfg, 'r') as f:
-        cfg = yaml.load(f)
+        cfg = yaml.load(f, Loader=yaml.FullLoader)
 
     print("successfully loaded config file: ", cfg)
 
@@ -161,6 +163,7 @@ def main():
         start_time = time.time()
         # COCO evaluation
         if iter_i % args.eval_interval == 0 and iter_i > 0:
+            print('start evaluate')
             ap50_95, ap50 = evaluator.evaluate(model)
             model.train()
             if args.tfboard:
@@ -184,7 +187,7 @@ def main():
         scheduler.step()
         end_time = time.time()
         all_time += end_time-start_time
-        if iter_i % 100 == 0:
+        if iter_i % args.print_interval == 0:
             # logging
             current_lr = scheduler.get_lr()[0] * batch_size * subdivision
             line = 'Time: {:.4f} Iter: {}/{}, lr: {:.6f}, Losses: xy {:.6f}, wh {:.6f}, conf {:.6f}, cls {:.6f}, ' \
